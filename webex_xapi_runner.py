@@ -90,14 +90,23 @@ class WebexXAPIRunner:
         }
         
         if arguments:
-            # If arguments is a string (raw JSON), parse it
+            # If arguments is a string (raw JSON), parse it to a proper dict
             if isinstance(arguments, str):
                 try:
-                    import json
-                    payload["arguments"] = json.loads(arguments)
-                except (json.JSONDecodeError, ValueError):
-                    # If it fails to parse, send as-is and let the API handle it
-                    payload["arguments"] = arguments
+                    parsed_args = json.loads(arguments)
+                    payload["arguments"] = parsed_args
+                except (json.JSONDecodeError, ValueError) as e:
+                    print(f"Error parsing arguments as JSON: {e}")
+                    print(f"Arguments string: {arguments}")
+                    # Try to fix common formatting issues
+                    # Remove quotes around the JSON if present
+                    cleaned = arguments.strip().strip('"').strip("'")
+                    try:
+                        parsed_args = json.loads(cleaned)
+                        payload["arguments"] = parsed_args
+                    except:
+                        print(f"Failed to parse arguments. Sending without arguments.")
+                        # Don't include malformed arguments
             else:
                 payload["arguments"] = arguments
         
@@ -186,7 +195,7 @@ def parse_xapi_command(command_string: str) -> tuple:
         command_string: Command string (e.g., 'Audio.Volume.Set {"Level":50}' or "SystemUnit.Boot")
         
     Returns:
-        Tuple of (command_name, arguments_json)
+        Tuple of (command_name, arguments_dict or None)
     """
     # Split command and arguments by first space
     parts = command_string.split(None, 1)
@@ -194,16 +203,25 @@ def parse_xapi_command(command_string: str) -> tuple:
     
     arguments = None
     if len(parts) > 1:
-        # Keep arguments as raw JSON string
-        arguments = parts[1].strip()
-        # Try to parse as JSON to validate it
+        # Parse arguments directly as dict
+        arguments_str = parts[1].strip()
         try:
-            import json
-            json.loads(arguments)
-        except (json.JSONDecodeError, ValueError):
-            # If not valid JSON, wrap it in a simple object
-            # This handles cases like "Level:50" -> {"Level": 50}
-            print(f"Warning: Arguments not in JSON format, passing as-is: {arguments}")
+            # Parse JSON string to dict
+            arguments = json.loads(arguments_str)
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"Warning: Arguments not valid JSON: {arguments_str}")
+            print(f"Error: {e}")
+            print("Tip: Make sure string values are quoted, e.g., {\"Action\":\"Restart\"} not {\"Action\":Restart}")
+            # Try to fix common issues
+            # Add quotes around unquoted string values
+            import re
+            fixed = re.sub(r':([A-Za-z]\w*)([\s,}])', r':"\1"\2', arguments_str)
+            try:
+                arguments = json.loads(fixed)
+                print(f"Auto-fixed to: {json.dumps(arguments)}")
+            except:
+                print("Could not auto-fix. Command will be sent without arguments.")
+                arguments = None
     
     return command_name, arguments
 
