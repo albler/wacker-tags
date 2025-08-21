@@ -76,17 +76,17 @@ class WebexXAPIRunner:
         
         Args:
             device_id: Device ID
-            command: xAPI command to execute
+            command: xAPI command to execute (e.g., "SystemUnit.Boot")
             arguments: Optional command arguments
             
         Returns:
             Command execution result
         """
-        url = f"{self.base_url}/xapi/command"
+        # URL format: POST https://webexapis.com/v1/xapi/command/{command}
+        url = f"{self.base_url}/xapi/command/{command}"
         
         payload = {
-            "deviceId": device_id,
-            "commandName": command
+            "deviceId": device_id
         }
         
         if arguments:
@@ -170,33 +170,44 @@ def parse_xapi_command(command_string: str) -> tuple:
     Parse xAPI command string into command name and arguments
     
     Args:
-        command_string: Command string (e.g., "Audio.Volume.Set Level: 50")
+        command_string: Command string (e.g., "Audio.Volume.Set Level:50" or "SystemUnit.Boot")
         
     Returns:
         Tuple of (command_name, arguments_dict)
     """
-    # Split command and arguments
+    # Split command and arguments by first space
     parts = command_string.split(None, 1)
     command_name = parts[0]
     
     arguments = {}
     if len(parts) > 1:
-        # Parse arguments (simple key:value pairs)
-        arg_string = parts[1]
-        for arg in arg_string.split():
-            if ":" in arg:
-                key, value = arg.split(":", 1)
-                # Try to convert to appropriate type
-                try:
-                    # Try integer
-                    arguments[key] = int(value)
-                except ValueError:
+        # Parse arguments - can be key:value pairs or JSON-like format
+        arg_string = parts[1].strip()
+        
+        # Try to parse as JSON first
+        try:
+            import json
+            arguments = json.loads(arg_string)
+        except (json.JSONDecodeError, ValueError):
+            # Parse as key:value pairs
+            for arg in arg_string.split():
+                if ":" in arg:
+                    key, value = arg.split(":", 1)
+                    # Try to convert to appropriate type
                     try:
-                        # Try float
-                        arguments[key] = float(value)
+                        # Try integer
+                        arguments[key] = int(value)
                     except ValueError:
-                        # Keep as string
-                        arguments[key] = value
+                        try:
+                            # Try float
+                            arguments[key] = float(value)
+                        except ValueError:
+                            # Try boolean
+                            if value.lower() in ('true', 'false'):
+                                arguments[key] = value.lower() == 'true'
+                            else:
+                                # Keep as string
+                                arguments[key] = value
     
     return command_name, arguments
 
@@ -210,12 +221,18 @@ Examples:
   # Set volume to 50 on all devices tagged "conference-room"
   python webex_xapi_runner.py --tag conference-room --command "Audio.Volume.Set Level:50"
   
-  # Get system unit state on devices tagged "production"
-  python webex_xapi_runner.py --tag production --command "SystemUnit.State.Get"
+  # Boot system on devices tagged "production"
+  python webex_xapi_runner.py --tag production --command "SystemUnit.Boot"
+  
+  # Get system unit state on devices tagged "meeting-room"
+  python webex_xapi_runner.py --tag meeting-room --command "SystemUnit.State.Get"
   
   # Using environment variable for token
   export WEBEX_ACCESS_TOKEN="your-token-here"
   python webex_xapi_runner.py --tag meeting-room --command "Standby.Deactivate"
+  
+  # With JSON arguments
+  python webex_xapi_runner.py --tag conference --command 'Audio.Volume.Set {"Level": 50}'
         """
     )
     
