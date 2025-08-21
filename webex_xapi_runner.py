@@ -70,14 +70,14 @@ class WebexXAPIRunner:
         
         return filtered_devices
     
-    def execute_xapi_command(self, device_id: str, command: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
+    def execute_xapi_command(self, device_id: str, command: str, arguments: Any = None) -> Dict[str, Any]:
         """
         Execute an xAPI command on a specific device
         
         Args:
             device_id: Device ID
             command: xAPI command to execute (e.g., "SystemUnit.Boot")
-            arguments: Optional command arguments
+            arguments: Optional command arguments (raw JSON string or dict)
             
         Returns:
             Command execution result
@@ -90,7 +90,20 @@ class WebexXAPIRunner:
         }
         
         if arguments:
-            payload["arguments"] = arguments
+            # If arguments is a string (raw JSON), parse it
+            if isinstance(arguments, str):
+                try:
+                    import json
+                    payload["arguments"] = json.loads(arguments)
+                except (json.JSONDecodeError, ValueError):
+                    # If it fails to parse, send as-is and let the API handle it
+                    payload["arguments"] = arguments
+            else:
+                payload["arguments"] = arguments
+        
+        # Print the full request details
+        print(f"\n📤 Sending request to: {url}")
+        print(f"📦 Request body: {json.dumps(payload, indent=2)}")
         
         response = requests.post(url, headers=self.headers, json=payload)
         
@@ -102,7 +115,7 @@ class WebexXAPIRunner:
                 "details": response.text
             }
     
-    def run_command_on_tagged_devices(self, tag: str, command: str, arguments: Dict[str, Any] = None) -> Dict[str, List[Dict[str, Any]]]:
+    def run_command_on_tagged_devices(self, tag: str, command: str, arguments: Any = None) -> Dict[str, List[Dict[str, Any]]]:
         """
         Run xAPI command on all devices matching a tag
         
@@ -170,44 +183,27 @@ def parse_xapi_command(command_string: str) -> tuple:
     Parse xAPI command string into command name and arguments
     
     Args:
-        command_string: Command string (e.g., "Audio.Volume.Set Level:50" or "SystemUnit.Boot")
+        command_string: Command string (e.g., 'Audio.Volume.Set {"Level":50}' or "SystemUnit.Boot")
         
     Returns:
-        Tuple of (command_name, arguments_dict)
+        Tuple of (command_name, arguments_json)
     """
     # Split command and arguments by first space
     parts = command_string.split(None, 1)
     command_name = parts[0]
     
-    arguments = {}
+    arguments = None
     if len(parts) > 1:
-        # Parse arguments - can be key:value pairs or JSON-like format
-        arg_string = parts[1].strip()
-        
-        # Try to parse as JSON first
+        # Keep arguments as raw JSON string
+        arguments = parts[1].strip()
+        # Try to parse as JSON to validate it
         try:
             import json
-            arguments = json.loads(arg_string)
+            json.loads(arguments)
         except (json.JSONDecodeError, ValueError):
-            # Parse as key:value pairs
-            for arg in arg_string.split():
-                if ":" in arg:
-                    key, value = arg.split(":", 1)
-                    # Try to convert to appropriate type
-                    try:
-                        # Try integer
-                        arguments[key] = int(value)
-                    except ValueError:
-                        try:
-                            # Try float
-                            arguments[key] = float(value)
-                        except ValueError:
-                            # Try boolean
-                            if value.lower() in ('true', 'false'):
-                                arguments[key] = value.lower() == 'true'
-                            else:
-                                # Keep as string
-                                arguments[key] = value
+            # If not valid JSON, wrap it in a simple object
+            # This handles cases like "Level:50" -> {"Level": 50}
+            print(f"Warning: Arguments not in JSON format, passing as-is: {arguments}")
     
     return command_name, arguments
 
@@ -219,7 +215,7 @@ def main():
         epilog="""
 Examples:
   # Set volume to 50 on all devices tagged "conference-room"
-  python webex_xapi_runner.py --tag conference-room --command "Audio.Volume.Set Level:50"
+  python webex_xapi_runner.py --tag conference-room --command 'Audio.Volume.Set {"Level": 50}'
   
   # Boot system on devices tagged "production"
   python webex_xapi_runner.py --tag production --command "SystemUnit.Boot"
@@ -230,9 +226,6 @@ Examples:
   # Using environment variable for token
   export WEBEX_ACCESS_TOKEN="your-token-here"
   python webex_xapi_runner.py --tag meeting-room --command "Standby.Deactivate"
-  
-  # With JSON arguments
-  python webex_xapi_runner.py --tag conference --command 'Audio.Volume.Set {"Level": 50}'
         """
     )
     
@@ -245,7 +238,7 @@ Examples:
     parser.add_argument(
         "--command",
         required=True,
-        help='xAPI command to execute (e.g., "Audio.Volume.Set Level:50")'
+        help='xAPI command to execute (e.g., \'Audio.Volume.Set {"Level": 50}\' or "SystemUnit.Boot")'
     )
     
     parser.add_argument(
